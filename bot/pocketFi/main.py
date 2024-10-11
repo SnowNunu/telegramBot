@@ -1,6 +1,8 @@
 import asyncio
 import aiohttp
 import brotli
+import random
+import os
 from loguru import logger
 from datetime import datetime, timedelta
 
@@ -109,7 +111,7 @@ class PocketFiBot:
                 status_code = response.status
                 if status_code == 200:
                     json_response = await response.json()
-                    logger.info(f'今日天已完成签到!')
+                    logger.info(f'今日天签到成功!')
                 else:
                     logger.error(f'签到失败:error code is: {status_code}')
                 
@@ -144,6 +146,32 @@ class PocketFiBot:
             await self.startScheduler()
 
 
-data = 'query_id=AAEphxN_AAAAACmHE3_PbcpL&user=%7B%22id%22%3A2131986217%2C%22first_name%22%3A%22nuan%22%2C%22last_name%22%3A%22Yu%22%2C%22username%22%3A%22Mandorala%22%2C%22language_code%22%3A%22zh-hans%22%2C%22allows_write_to_pm%22%3Atrue%7D&auth_date=1728562588&hash=2c5d31c19dd06f65039678c01b4b9f16a6c85f452d2cc0bc6d75ad627243e099'
-bot = PocketFiBot(data)
-asyncio.run(bot.startScheduler())
+# 读取文件并逐行执行
+async def process_all_data(file_path):
+    tasks = []
+    
+    # 读取文件
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+
+    # 对每个data创建一个PocketFiBot实例并异步调用startScheduler
+    for line in lines:
+        data = line.strip()  # 去除每行的换行符
+        if data:
+            bot = PocketFiBot(data)
+
+            # 随机等待 10 到 35 秒
+            delay = random.uniform(10, 35)
+            logger.info(f"将延迟 {delay:.2f} 秒启动任务。")
+            await asyncio.sleep(delay)
+
+            # 创建异步任务
+            task = asyncio.create_task(bot.startScheduler())
+            tasks.append(task)
+    
+    # 等待所有任务完成
+    await asyncio.gather(*tasks)
+
+# 启动异步处理
+file_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'pocket.txt')
+asyncio.run(process_all_data(file_path))
