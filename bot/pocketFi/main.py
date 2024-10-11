@@ -2,7 +2,7 @@ import asyncio
 import aiohttp
 import brotli
 from loguru import logger
-import time
+from datetime import datetime, timedelta
 
 logger.add('runtime.log', rotation='10 MB', colorize=True)
 
@@ -12,7 +12,7 @@ class PocketFiBot:
         self.data = data
 
     # 领取未燃烧的switch
-    async def claimSwitch(self):
+    async def getClaimTime(self):
         url = 'https://gm.pocketfi.org/mining/claimMining'
         headers = {
                 'Accept': '*/*',
@@ -33,21 +33,19 @@ class PocketFiBot:
 
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers) as response:
-                # 解析 JSON 响应
-                json_response = await response.json()
-                # logger.info(f'response is: {json_response}')
-                # 毫秒时间戳
-                endTimestamp = json_response.get('1728584580035')
-
-                # 将毫秒时间戳转换为秒时间戳
-                timestamp_s = timestamp_ms / 1000
-
-                # 将时间戳转换为本地时间的时间结构
-                time_struct = time.localtime(timestamp_s)
-
-                # 格式化输出时间
-                formatted_time = time.strftime('%Y-%m-%d %H:%M:%S', time_struct)
-                print(formatted_time)  
+                if response.status == 200:
+                    json_response = await response.json()
+                    gotAmount = json_response.get('userMining', {}).get('gotAmount', None)
+                    logger.info(f'领取成功,当前switch数量：{gotAmount}!')
+                    endTimestamp = json_response.get('userMining', {}).get('dttmClaimDeadline', None)
+                    if endTimestamp:
+                        return endTimestamp / 1000
+                    else:
+                        logger.error("Response missing 'dttmClaimDeadline'.")
+                        return None
+                else:
+                    logger.error(f'claimMining occur error: {response.status}')
+                    return None
 
     # 查询当天是否已完成签到
     async def checkSignStatus(self):    
@@ -79,7 +77,7 @@ class PocketFiBot:
                     currentDay = dailyTask.get('currentDay')
                     if dailyTask.get('doneAmount') == 0:
                         logger.info(f'第{currentDay + 1}天还未签到!')
-                        await self.doSignIn(data)
+                        await self.doSignIn()
                     else:
                         logger.info(f'今日天已完成签到!')
                 else:
@@ -87,14 +85,14 @@ class PocketFiBot:
 
     # 进行签到
     async def doSignIn(self):    
-        url = 'https://rubot.pocketfi.org/boost/activateDailyBoost'
+        url = 'https://bot.pocketfi.org/boost/activateDailyBoost'
         headers = {
                 'Accept': '*/*',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Accept-Language': 'zh-CN,zh-Hans;q=0.9',
                 'Connection': 'keep-alive',
                 'Content-Length': '0',
-                'Host': 'rubot.pocketfi.org',
+                'Host': 'bot.pocketfi.org',
                 'Origin': 'https://pocketfi.app',
                 'Referer': 'https://pocketfi.app/',
                 'Sec-Fetch-Dest': 'empty',
@@ -106,7 +104,7 @@ class PocketFiBot:
             }
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
+            async with session.post(url, headers=headers) as response:
                 # 解析 JSON 响应
                 status_code = response.status
                 if status_code == 200:
@@ -114,29 +112,38 @@ class PocketFiBot:
                     logger.info(f'今日天已完成签到!')
                 else:
                     logger.error(f'签到失败:error code is: {status_code}')
+                
+            
+    async def startScheduler(self):
+        await self.checkSignStatus()
+        next_time = await self.getClaimTime()
+
+        if next_time:
+            # 将 Unix 时间戳转换为 datetime 对象
+            next_time_datetime = datetime.fromtimestamp(next_time)
+            logger.info(f"下次领取时间: {next_time_datetime}")
+
+            # 计算提前 20 到 30 分钟的随机时间
+            delay_time = timedelta(minutes=20)
+            time_until_next_call = next_time_datetime - datetime.now() - delay_time
+
+            # 如果下一次调用时间已经过去，立即调用
+            if time_until_next_call.total_seconds() <= 0:
+                logger.info("Time passed, invoking the API immediately.")
+            else:
+                logger.info(f"休眠:{time_until_next_call.total_seconds()}秒后再次调用。")
+
+                # 等待到目标时间前的 20 分钟
+                await asyncio.sleep(time_until_next_call.total_seconds())
+
+            # 再次递归调用
+            await self.startScheduler()
+        else:
+            logger.error("领取失败,60S后重试。")
+            await asyncio.sleep(60)
+            await self.startScheduler()
 
 
-data = 'query_id=AAEphxN_AAAAACmHE39Fk4-H&user=%7B%22id%22%3A2131986217%2C%22first_name%22%3A%22nuan%22%2C%22last_name%22%3A%22Yu%22%2C%22username%22%3A%22Mandorala%22%2C%22language_code%22%3A%22zh-hans%22%2C%22allows_write_to_pm%22%3Atrue%7D&auth_date=1728552265&hash=3fa5840b2634f1e003582d88fe23f1f3aace5659bdaaf30b87a6b295e725a9c4'
-
+data = 'query_id=AAEphxN_AAAAACmHE3_PbcpL&user=%7B%22id%22%3A2131986217%2C%22first_name%22%3A%22nuan%22%2C%22last_name%22%3A%22Yu%22%2C%22username%22%3A%22Mandorala%22%2C%22language_code%22%3A%22zh-hans%22%2C%22allows_write_to_pm%22%3Atrue%7D&auth_date=1728562588&hash=2c5d31c19dd06f65039678c01b4b9f16a6c85f452d2cc0bc6d75ad627243e099'
 bot = PocketFiBot(data)
-asyncio.run(bot.claimSwitch())
-
-
-
-
-# {
-# 	'userMining': {
-# 		'userId': 2131986217,
-# 		'speed': 0.29531250000000003,
-# 		'dttmLastClaim': 1728562980035,
-# 		'miningAmount': 0,
-# 		'status': 0,
-# 		'gotAmount': 87.18632812499997,
-# 		'sentNotificationAmount': 0,
-# 		'guild': 1,
-# 		'alliance': 'mlwex',
-# 		'dttmClaimDeadline': 1728584580035,
-# 		'dttmLastPayment': 1728562500000,
-# 		'withheld': False
-# 	}
-# }
+asyncio.run(bot.startScheduler())
